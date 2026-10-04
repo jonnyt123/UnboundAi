@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#05080f" />
+  <meta name="description" content="THREAD//NULL — draw the cage, break the signal. A precision action game built for the browser." />
+  <title>THREAD//NULL</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div id="app" data-phase="title">
+    <canvas id="game" aria-label="THREAD NULL game arena"></canvas>
+    <div class="screen-shader" aria-hidden="true"></div>
+
+    <section id="compatibilityPanel" class="compatibility-panel" role="alert" hidden>
+      <div class="compatibility-card">
+        <p class="panel-kicker">COMPATIBILITY CHECK</p>
+        <h1>DISPLAY LINK UNAVAILABLE</h1>
+        <p>This browser could not initialize the 2D rendering surface required by THREAD//NULL. Hardware acceleration or a current browser build may be required.</p>
+      </div>
+    </section>
+
+    <header id="hud" class="hud" aria-live="polite" hidden>
+      <div class="hud-cluster hud-left">
+        <div class="eyebrow">SECTOR <span id="sectorValue">01</span></div>
+        <div id="objectiveValue" class="objective">SEAL 0 / 4</div>
+      </div>
+      <div class="hud-cluster hud-center" aria-label="Player status">
+        <div class="shield-row" id="shieldPips" aria-label="Shield integrity"></div>
+        <div class="energy-shell" aria-label="Thread charge">
+          <div id="energyBar" class="energy-bar"></div>
+        </div>
+        <div class="dash-shell" aria-label="Burst cooldown">
+          <div id="dashBar" class="dash-bar"></div>
+        </div>
+      </div>
+      <div class="hud-cluster hud-right">
+        <div id="comboValue" class="combo">×1</div>
+        <div id="scoreValue" class="score">000000</div>
+      </div>
+      <button id="pauseButton" class="icon-button pause-button" type="button" aria-label="Pause game">Ⅱ</button>
+    </header>
+
+    <div id="sectorBanner" class="sector-banner" aria-live="assertive" hidden>
+      <span class="sector-kicker">BREACH STABILIZED</span>
+      <strong id="sectorBannerTitle">SECTOR 02</strong>
+      <span id="sectorBannerSub">Signal pressure rising</span>
+    </div>
+
+    <main id="titleScreen" class="menu-screen title-screen">
+      <div class="brand-lockup">
+        <div class="brand-sigil" aria-hidden="true"><span></span><span></span><span></span></div>
+        <p class="brand-overline">BLACKSITE RECOVERY PROTOCOL</p>
+        <h1><span>THREAD</span><b>//NULL</b></h1>
+        <p class="tagline">Draw the cage. Break the signal.</p>
+      </div>
+      <div class="menu-actions">
+        <button id="startButton" class="primary-button" type="button"><span>START RUN</span><small>ENTER THE BREACH</small></button>
+        <div class="secondary-row">
+          <button id="howButton" class="ghost-button" type="button">HOW TO PLAY</button>
+          <button id="settingsButton" class="ghost-button" type="button">SETTINGS</button>
+        </div>
+        <p id="bestScoreLabel" class="best-score">BEST SIGNAL: 000000</p>
+      </div>
+      <p class="title-footer">Keyboard • Touch • Offline • No account</p>
+    </main>
+
+    <section id="howPanel" class="modal" role="dialog" aria-modal="true" aria-labelledby="howTitle" hidden>
+      <div class="modal-card how-card">
+        <button class="modal-close" data-close-panel type="button" aria-label="Close how to play">×</button>
+        <p class="panel-kicker">FIELD MANUAL 01</p>
+        <h2 id="howTitle">WEAVE. CLOSE. SEAL.</h2>
+        <div class="instruction-grid">
+          <article><span class="instruction-glyph">01</span><h3>Move</h3><p>WASD / arrows or the left touch stick. Stay inside the lattice.</p></article>
+          <article><span class="instruction-glyph">02</span><h3>Weave</h3><p>Hold Space or WEAVE while moving. Your thread burns charge.</p></article>
+          <article><span class="instruction-glyph">03</span><h3>Close</h3><p>Curve back through your thread's start node. Anything hostile inside the loop is sealed.</p></article>
+          <article><span class="instruction-glyph">04</span><h3>Burst</h3><p>Shift or BURST grants a short invulnerable dash. Use it to cross pressure safely.</p></article>
+        </div>
+        <div class="tip-strip"><strong>Final protocol:</strong> disable all three boss locks with loops, then cage the exposed core three times.</div>
+        <button class="primary-button compact" data-close-panel type="button"><span>UNDERSTOOD</span></button>
+      </div>
+    </section>
+
+    <section id="settingsPanel" class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" hidden>
+      <div class="modal-card settings-card">
+        <button class="modal-close" data-close-panel type="button" aria-label="Close settings">×</button>
+        <p class="panel-kicker">SYSTEM CALIBRATION</p>
+        <h2 id="settingsTitle">SETTINGS</h2>
+        <div class="settings-list">
+          <label><span>Master volume</span><input id="masterVolume" type="range" min="0" max="1" step="0.05" value="0.8" /></label>
+          <label><span>Music</span><input id="musicVolume" type="range" min="0" max="1" step="0.05" value="0.6" /></label>
+          <label><span>Effects</span><input id="sfxVolume" type="range" min="0" max="1" step="0.05" value="0.85" /></label>
+          <label><span>Graphics</span><select id="qualitySelect"><option value="low">Low</option><option value="medium">Medium</option><option value="high" selected>High</option></select></label>
+          <label class="toggle-row"><span><b>Camera shake</b><small>Impact motion only</small></span><input id="shakeToggle" type="checkbox" checked /></label>
+          <label class="toggle-row"><span><b>Reduced motion</b><small>Minimizes non-essential motion</small></span><input id="motionToggle" type="checkbox" /></label>
+          <label class="toggle-row"><span><b>High contrast</b><small>Stronger gameplay silhouettes</small></span><input id="contrastToggle" type="checkbox" /></label>
+          <label><span>Interface scale</span><input id="uiScale" type="range" min="0.9" max="1.2" step="0.05" value="1" /></label>
+        </div>
+        <button class="primary-button compact" data-close-panel type="button"><span>APPLY</span></button>
+      </div>
+    </section>
+
+    <section id="pausePanel" class="modal pause-modal" role="dialog" aria-modal="true" aria-labelledby="pauseTitle" hidden>
+      <div class="modal-card pause-card">
+        <p class="panel-kicker">SIGNAL HELD</p>
+        <h2 id="pauseTitle">PAUSED</h2>
+        <button id="resumeButton" class="primary-button compact" type="button"><span>RESUME</span></button>
+        <button id="pauseSettingsButton" class="ghost-button wide" type="button">SETTINGS</button>
+        <button id="returnTitleButton" class="ghost-button wide danger" type="button">ABORT RUN</button>
+      </div>
+    </section>
+
+    <section id="resultPanel" class="result-screen" role="dialog" aria-modal="true" aria-labelledby="resultTitle" hidden>
+      <div class="result-card">
+        <p id="resultKicker" class="panel-kicker">PROTOCOL COMPLETE</p>
+        <div id="resultGrade" class="result-grade">A</div>
+        <h2 id="resultTitle">SIGNAL COLLAPSED</h2>
+        <p id="resultCopy" class="result-copy">The blacksite is quiet. For now.</p>
+        <div class="result-stats">
+          <div><span>SCORE</span><strong id="resultScore">000000</strong></div>
+          <div><span>TIME</span><strong id="resultTime">00:00</strong></div>
+          <div><span>SEALED</span><strong id="resultSealed">0</strong></div>
+          <div><span>BEST COMBO</span><strong id="resultCombo">×1</strong></div>
+        </div>
+        <div class="result-actions">
+          <button id="retryButton" class="primary-button compact" type="button"><span>RUN AGAIN</span></button>
+          <button id="resultTitleButton" class="ghost-button wide" type="button">RETURN TO TITLE</button>
+        </div>
+      </div>
+    </section>
+
+    <div id="tutorialPrompt" class="tutorial-prompt" hidden></div>
+
+    <div id="touchControls" class="touch-controls" aria-label="Touch controls" hidden>
+      <div id="stickZone" class="stick-zone" aria-label="Movement joystick"><div id="stickKnob" class="stick-knob"></div></div>
+      <div class="touch-actions">
+        <button id="weaveButton" class="touch-button weave-button" type="button">WEAVE</button>
+        <button id="dashButton" class="touch-button dash-button" type="button">BURST</button>
+      </div>
+    </div>
+
+    <div id="rotateHint" class="rotate-hint" hidden><div class="rotate-icon">↻</div><strong>ROTATE TO LANDSCAPE</strong><span>THREAD//NULL plays best with room to move.</span></div>
+  </div>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
