@@ -1,7 +1,7 @@
 // @ts-check
 import { SECTORS, WORLD } from '../config.js';
 import { SeededRng } from './rng.js';
-import { clamp, circleHit, distance, normalize, pointInPolygon, polygonArea, polylineLength } from './math.js';
+import { clamp, circleHit, distance, normalize, pointInPolygon, polygonArea } from './math.js';
 
 /** @typedef {{x:number,y:number}} Point */
 /** @typedef {'wisp'|'striker'|'sentinel'} EnemyType */
@@ -10,17 +10,22 @@ import { clamp, circleHit, distance, normalize, pointInPolygon, polygonArea, pol
 /** @typedef {{type:string,[key:string]:any}} GameEvent */
 /** @typedef {{x:number,y:number,weave:boolean,dash:boolean,pause:boolean}} ActionState */
 
-const PLAYER_SPEED = 252;
-const DASH_SPEED = 630;
-const DASH_DURATION = 165;
-const DASH_COOLDOWN = 1850;
-const WEAVE_DRAIN = 23;
-const WEAVE_REGEN = 18;
-const WEAVE_POINT_SPACING = 11;
-const LOOP_CLOSE_DISTANCE = 33;
-const LOOP_MIN_LENGTH = 230;
-const LOOP_MIN_AREA = 7600;
-const DAMAGE_INVULN = 950;
+const PLAYER_SPEED = 268;
+const DASH_SPEED = 680;
+const DASH_DURATION = 180;
+const DASH_COOLDOWN = 1500;
+const WEAVE_DRAIN = 20.5;
+const WEAVE_REGEN = 22;
+const WEAVE_POINT_SPACING = 10;
+const LOOP_CLOSE_DISTANCE = 40;
+const LOOP_MIN_LENGTH = 210;
+const LOOP_MIN_AREA = 6800;
+const LOOP_MIN_AGE_MS = 540;
+const DAMAGE_INVULN = 1050;
+const SECTOR_GRACE_MS = 900;
+const CHAIN_WINDOW_MS = 5500;
+const MAX_COMBO = 12;
+const MAX_BULLETS = 72;
 
 export class GameSimulation {
   /** @param {{seed?:number}} [options] */
@@ -32,10 +37,12 @@ export class GameSimulation {
     this.score = 0;
     this.combo = 1;
     this.bestCombo = 1;
+    this.chainTimerMs = 0;
     this.totalSealed = 0;
     this.runTimeMs = 0;
     this.sectorSealed = 0;
     this.transitionMs = 0;
+    this.sectorGraceMs = 0;
     this.tutorialStage = 0;
     this.tutorialMs = 0;
     this.player = this._freshPlayer();
@@ -75,10 +82,12 @@ export class GameSimulation {
     this.score = 0;
     this.combo = 1;
     this.bestCombo = 1;
+    this.chainTimerMs = 0;
     this.totalSealed = 0;
     this.runTimeMs = 0;
     this.sectorSealed = 0;
     this.transitionMs = 0;
+    this.sectorGraceMs = SECTOR_GRACE_MS;
     this.tutorialStage = 0;
     this.tutorialMs = 8500;
     this.player = this._freshPlayer();
@@ -139,8 +148,12 @@ export class GameSimulation {
         this.sector = this.sectorIndex + 1;
         this.sectorSealed = 0;
         this.combo = 1;
+        this.chainTimerMs = 0;
+        this.sectorGraceMs = SECTOR_GRACE_MS;
         this.player.shield = Math.min(this.player.maxShield, this.player.shield + 1);
         this.player.energy = 100;
+        this.player.dashCooldownMs = 0;
+        this.player.invulnerableMs = SECTOR_GRACE_MS;
         this.player.x = WORLD.width * 0.5;
         this.player.y = WORLD.height * 0.72;
         this.enemies = [];
@@ -153,6 +166,8 @@ export class GameSimulation {
       return;
     }
 
+    this.sectorGraceMs = Math.max(0, this.sectorGraceMs - dtMs);
+    this._updateChain(dtMs);
     this._updatePlayer(dtMs, dt, input);
     this._updateEnemies(dtMs, dt);
     this._updateBullets(dtMs, dt);
@@ -171,7 +186,7 @@ export class GameSimulation {
     if (input.dash && p.dashCooldownMs <= 0) {
       p.dashMs = DASH_DURATION;
       p.dashCooldownMs = DASH_COOLDOWN;
-      p.invulnerableMs = Math.max(p.invulnerableMs, DASH_DURATION + 70);
+      p.invulnerableMs = Math.max(p.invulnerableMs, DASH_DURATION + 90);
       this._emit('dash', { x: p.x, y: p.y });
     }
 
@@ -198,6 +213,24 @@ export class GameSimulation {
     }
   }
 
+  /** @param {number} dtMs */
+  _updateChain(dtMs) {
+    if (this.combo <= 1 || this.chainTimerMs <= 0) return;
+    this.chainTimerMs = Math.max(0, this.chainTimerMs - dtMs);
+    if (this.chainTimerMs === 0) {
+      const lostCombo = this.combo;
+      this.combo = 1;
+      this._emit('chainBreak', { combo: lostCombo });
+    }
+  }
+
+  /** @param {number} gain */
+  _advanceChain(gain) {
+    this.combo = Math.min(MAX_COMBO, this.combo + Math.max(1, gain));
+    this.bestCombo = Math.max(this.bestCombo, this.combo);
+    this.chainTimerMs = CHAIN_WINDOW_MS;
+  }
+
   _beginWeave() {
     const p = this.player;
     p.weaving = true;
@@ -219,12 +252,12 @@ export class GameSimulation {
     if (d >= WEAVE_POINT_SPACING) {
       this.trail.push({ x: p.x, y: p.y });
       this.trailLength += d;
-      if (this.trail.length > 220) this._breakWeave('overflow');
+      if (this.trail.length > 240) this._breakWeave('overflow');
     }
   }
 
   _canCloseLoop() {
-    if (this.trail.length < 12 || this.trailLength < LOOP_MIN_LENGTH || this.weaveAgeMs < 650) return false;
+    if (this.trail.length < 10 || this.trailLength < LOOP_MIN_LENGTH || this.weaveAgeMs < LOOP_MIN_AGE_MS) return false;
     const start = this.trail[0];
     const p = this.player;
     return distance(start.x, start.y, p.x, p.y) <= LOOP_CLOSE_DISTANCE;
@@ -235,7 +268,7 @@ export class GameSimulation {
     if (polygonArea(loop) < LOOP_MIN_AREA) return;
     this.resolveLoop(loop);
     this.player.weaving = false;
-    this.player.energy = Math.max(0, this.player.energy - 7);
+    this.player.energy = Math.max(0, this.player.energy - 5);
     this.trail = [];
     this.trailLength = 0;
     this.weaveAgeMs = 0;
@@ -265,34 +298,47 @@ export class GameSimulation {
         if (lock.active && pointInPolygon(lock, loop)) {
           lock.active = false;
           lockHits += 1;
-          this.score += 700;
+          this.score += 700 * Math.max(1, this.combo);
           this._emit('lockBreak', { x: lock.x, y: lock.y });
         }
       }
       const allLocksDown = this.boss.locks.every((lock) => !lock.active);
-      if (allLocksDown && lockHits > 0) this.boss.exposeMs = 450;
-      const coreEligible = allLocksDown && lockHits === 0 && pointInPolygon(this.boss, loop) && area > 18000;
+      if (allLocksDown && lockHits > 0) this.boss.exposeMs = 650;
+      const coreEligible = allLocksDown && lockHits === 0 && pointInPolygon(this.boss, loop) && area > 16000;
       if (coreEligible && this.boss.hitCooldownMs <= 0) {
         this.boss.hp -= 1;
-        this.boss.hitCooldownMs = 1200;
+        this.boss.hitCooldownMs = 850;
         bossHit = true;
-        this.score += 1600 * this.combo;
-        this.combo = Math.min(9, this.combo + 1);
-        this.bestCombo = Math.max(this.bestCombo, this.combo);
+        this.score += 1650 * this.combo;
+        this._advanceChain(1);
+        this.player.dashCooldownMs = Math.max(0, this.player.dashCooldownMs - 320);
+        this.player.energy = Math.min(100, this.player.energy + 18);
         this._emit('bossHit', { x: this.boss.x, y: this.boss.y, hp: this.boss.hp });
         if (this.boss.hp <= 0) this._win();
       }
     }
 
     if (sealedThisLoop > 0) {
-      this.combo = Math.min(9, this.combo + Math.max(1, sealedThisLoop - 1));
-      this.bestCombo = Math.max(this.bestCombo, this.combo);
-    } else if (!bossHit && lockHits === 0) {
-      this.combo = 1;
-      this.score += Math.min(75, Math.floor(area / 1400));
+      const comboBeforeReward = this.combo;
+      const gain = 1 + Math.min(2, sealedThisLoop - 1);
+      const multiBonus = sealedThisLoop > 1 ? sealedThisLoop * sealedThisLoop * 85 * Math.max(1, comboBeforeReward) : 0;
+      this.score += multiBonus;
+      this._advanceChain(gain);
+      this.player.energy = Math.min(100, this.player.energy + sealedThisLoop * 4);
+      this.player.dashCooldownMs = Math.max(0, this.player.dashCooldownMs - sealedThisLoop * 180);
+      if (sealedThisLoop > 1) this._emit('multiSeal', { count: sealedThisLoop, bonus: multiBonus, combo: this.combo });
+    } else if (lockHits > 0) {
+      this._advanceChain(Math.min(2, lockHits));
+      this.player.dashCooldownMs = Math.max(0, this.player.dashCooldownMs - lockHits * 220);
+    } else if (!bossHit) {
+      if (this.combo > 1) {
+        this.combo = Math.max(1, this.combo - 1);
+        this.chainTimerMs = Math.min(this.chainTimerMs, CHAIN_WINDOW_MS * 0.42);
+      }
+      this.score += Math.min(80, Math.floor(area / 1300));
     }
 
-    this._emit('loopClosed', { points: loop, sealed: sealedThisLoop, lockHits, bossHit, area });
+    this._emit('loopClosed', { points: loop, sealed: sealedThisLoop, lockHits, bossHit, area, combo: this.combo });
     this._checkSectorComplete();
     return { sealed: sealedThisLoop, lockHits, bossHit };
   }
@@ -301,9 +347,9 @@ export class GameSimulation {
   _sealEnemy(enemy) {
     this.sectorSealed += 1;
     this.totalSealed += 1;
-    const base = enemy.type === 'sentinel' ? 260 : enemy.type === 'striker' ? 190 : 130;
+    const base = enemy.type === 'sentinel' ? 280 : enemy.type === 'striker' ? 205 : 140;
     this.score += base * this.combo;
-    this.player.energy = Math.min(100, this.player.energy + 10);
+    this.player.energy = Math.min(100, this.player.energy + 11);
     this._emit('enemySealed', { x: enemy.x, y: enemy.y, enemyType: enemy.type, combo: this.combo });
   }
 
@@ -321,13 +367,13 @@ export class GameSimulation {
     if (this.sector >= 5 || this.phase !== 'playing') return;
     const config = SECTORS[this.sectorIndex];
     if (this.sectorSealed >= config.target) {
-      const bonus = 700 + this.sector * 250;
+      const bonus = 700 + this.sector * 250 + this.player.shield * 100 + this.combo * 50;
       this.score += bonus;
       this.phase = 'intermission';
-      this.transitionMs = 2100;
+      this.transitionMs = 1650;
       this.bullets = [];
       this._breakWeave('sector');
-      this._emit('sectorClear', { sector: this.sector, bonus });
+      this._emit('sectorClear', { sector: this.sector, bonus, combo: this.combo });
     }
   }
 
@@ -344,17 +390,17 @@ export class GameSimulation {
   /** @param {EnemyType} type */
   _spawnEnemy(type) {
     let x = WORLD.width * 0.5, y = WORLD.height * 0.3;
-    for (let tries = 0; tries < 10; tries += 1) {
+    for (let tries = 0; tries < 12; tries += 1) {
       x = this.rng.range(WORLD.margin + 70, WORLD.width - WORLD.margin - 70);
       y = this.rng.range(WORLD.margin + 65, WORLD.height - WORLD.margin - 65);
-      if (distance(x, y, this.player.x, this.player.y) > 220) break;
+      if (distance(x, y, this.player.x, this.player.y) > 245) break;
     }
     const radius = type === 'sentinel' ? 20 : type === 'striker' ? 17 : 14;
     this.enemies.push({
       id: this.nextEntityId++, type, x, y, vx: 0, vy: 0, radius,
       phase: this.rng.range(0, Math.PI * 2),
-      shotCooldown: this.rng.range(650, 1700),
-      chargeCooldown: this.rng.range(900, 2100),
+      shotCooldown: this.rng.range(900, 1850),
+      chargeCooldown: this.rng.range(1200, 2300),
       chargeMs: 0,
     });
     this._emit('enemySpawn', { x, y, enemyType: type });
@@ -368,8 +414,8 @@ export class GameSimulation {
       hp: 3,
       maxHp: 3,
       angle: 0,
-      pulseCooldownMs: 900,
-      addCooldownMs: 1800,
+      pulseCooldownMs: 1150,
+      addCooldownMs: 2600,
       hitCooldownMs: 0,
       exposeMs: 0,
       locks: [0, 1, 2].map((index) => ({ id: index, active: true, x: 0, y: 0, angle: index * (Math.PI * 2 / 3) })),
@@ -381,7 +427,7 @@ export class GameSimulation {
   /** @param {number} dtMs @param {number} dt */
   _updateEnemies(dtMs, dt) {
     const p = this.player;
-    const sectorScale = 1 + (this.sector - 1) * 0.08;
+    const sectorScale = 0.92 + (this.sector - 1) * 0.085;
     for (const enemy of this.enemies) {
       enemy.phase += dt * (0.7 + enemy.id % 5 * 0.08);
       enemy.shotCooldown -= dtMs;
@@ -390,7 +436,7 @@ export class GameSimulation {
       const toPlayer = normalize(p.x - enemy.x, p.y - enemy.y);
 
       if (enemy.type === 'wisp') {
-        const speed = 72 * sectorScale;
+        const speed = 70 * sectorScale;
         const wobble = Math.sin(enemy.phase * 2.1) * 0.52;
         const side = { x: -toPlayer.y, y: toPlayer.x };
         enemy.vx = (toPlayer.x + side.x * wobble) * speed;
@@ -398,29 +444,29 @@ export class GameSimulation {
       } else if (enemy.type === 'striker') {
         const d = distance(enemy.x, enemy.y, p.x, p.y);
         const side = { x: -toPlayer.y, y: toPlayer.x };
-        const radial = d > 250 ? 0.8 : d < 170 ? -0.7 : 0.06;
-        const speed = 82 * sectorScale;
+        const radial = d > 255 ? 0.76 : d < 165 ? -0.68 : 0.04;
+        const speed = 80 * sectorScale;
         enemy.vx = (toPlayer.x * radial + side.x * 0.86) * speed;
         enemy.vy = (toPlayer.y * radial + side.y * 0.86) * speed;
         if (enemy.shotCooldown <= 0) {
-          this._fireBullet(enemy.x, enemy.y, toPlayer.x, toPlayer.y, 255 + this.sector * 12);
-          enemy.shotCooldown = Math.max(650, 1600 - this.sector * 120) + this.rng.range(0, 380);
+          this._fireBullet(enemy.x, enemy.y, toPlayer.x, toPlayer.y, 238 + this.sector * 12);
+          enemy.shotCooldown = Math.max(760, 1740 - this.sector * 115) + this.rng.range(0, 420);
           this._emit('enemyFire', { x: enemy.x, y: enemy.y });
         }
       } else {
         if (enemy.chargeMs > 0) {
-          // keep current velocity through the charge
+          // Preserve committed charge velocity for a readable attack arc.
         } else if (enemy.chargeCooldown <= 0) {
-          enemy.vx = toPlayer.x * 335 * sectorScale;
-          enemy.vy = toPlayer.y * 335 * sectorScale;
-          enemy.chargeMs = 520;
-          enemy.chargeCooldown = 2500 + this.rng.range(0, 500);
+          enemy.vx = toPlayer.x * 315 * sectorScale;
+          enemy.vy = toPlayer.y * 315 * sectorScale;
+          enemy.chargeMs = 500;
+          enemy.chargeCooldown = 2700 + this.rng.range(0, 600);
           this._emit('sentinelCharge', { x: enemy.x, y: enemy.y });
         } else {
           const center = normalize(WORLD.width * 0.5 - enemy.x, WORLD.height * 0.5 - enemy.y);
           const side = { x: -center.y, y: center.x };
-          enemy.vx = (center.x * 0.18 + side.x) * 76 * sectorScale;
-          enemy.vy = (center.y * 0.18 + side.y) * 76 * sectorScale;
+          enemy.vx = (center.x * 0.18 + side.x) * 74 * sectorScale;
+          enemy.vy = (center.y * 0.18 + side.y) * 74 * sectorScale;
         }
       }
 
@@ -455,17 +501,18 @@ export class GameSimulation {
     this._syncBossLocks();
 
     if (boss.pulseCooldownMs <= 0) {
-      const spokes = boss.locks.every((lock) => !lock.active) ? 8 : 6;
+      const unlocked = boss.locks.every((lock) => !lock.active);
+      const spokes = unlocked ? 7 : 5;
       for (let i = 0; i < spokes; i += 1) {
         const angle = (i / spokes) * Math.PI * 2 + boss.angle;
-        this._fireBullet(boss.x, boss.y, Math.cos(angle), Math.sin(angle), 205);
+        this._fireBullet(boss.x, boss.y, Math.cos(angle), Math.sin(angle), unlocked ? 215 : 195);
       }
-      boss.pulseCooldownMs = boss.locks.every((lock) => !lock.active) ? 950 : 1250;
+      boss.pulseCooldownMs = unlocked ? 920 : 1320;
       this._emit('bossPulse', { x: boss.x, y: boss.y });
     }
-    if (boss.addCooldownMs <= 0 && this.enemies.length < 6) {
-      this._spawnEnemy(this.rng.next() > 0.52 ? 'striker' : 'wisp');
-      boss.addCooldownMs = 2500;
+    if (boss.addCooldownMs <= 0 && this.enemies.length < 5) {
+      this._spawnEnemy(this.rng.next() > 0.55 ? 'striker' : 'wisp');
+      boss.addCooldownMs = 3000;
     }
   }
 
@@ -481,12 +528,13 @@ export class GameSimulation {
   /** @param {number} x @param {number} y @param {number} dx @param {number} dy @param {number} speed */
   _fireBullet(x, y, dx, dy, speed) {
     const dir = normalize(dx, dy);
-    this.bullets.push({ id: this.nextEntityId++, x, y, vx: dir.x * speed, vy: dir.y * speed, radius: 5, lifeMs: 4600 });
+    if (this.bullets.length >= MAX_BULLETS) this.bullets.shift();
+    this.bullets.push({ id: this.nextEntityId++, x, y, vx: dir.x * speed, vy: dir.y * speed, radius: 5, lifeMs: 4400 });
   }
 
   _resolveDamage() {
     const p = this.player;
-    if (p.invulnerableMs > 0) return;
+    if (p.invulnerableMs > 0 || this.sectorGraceMs > 0) return;
     for (const enemy of this.enemies) {
       if (circleHit(enemy.x, enemy.y, enemy.radius + WORLD.playerRadius + 3, p.x, p.y)) {
         this._damagePlayer(enemy.x, enemy.y);
@@ -507,14 +555,15 @@ export class GameSimulation {
   /** @param {number} sourceX @param {number} sourceY */
   _damagePlayer(sourceX, sourceY) {
     const p = this.player;
-    if (p.invulnerableMs > 0) return;
+    if (p.invulnerableMs > 0 || this.sectorGraceMs > 0) return;
     p.shield -= 1;
     p.invulnerableMs = DAMAGE_INVULN;
     this.combo = 1;
+    this.chainTimerMs = 0;
     this._breakWeave('hit');
     const away = normalize(p.x - sourceX, p.y - sourceY);
-    p.x = clamp(p.x + away.x * 28, WORLD.margin, WORLD.width - WORLD.margin);
-    p.y = clamp(p.y + away.y * 28, WORLD.margin, WORLD.height - WORLD.margin);
+    p.x = clamp(p.x + away.x * 34, WORLD.margin, WORLD.width - WORLD.margin);
+    p.y = clamp(p.y + away.y * 34, WORLD.margin, WORLD.height - WORLD.margin);
     this._emit('playerHit', { x: p.x, y: p.y, shield: p.shield });
     if (p.shield <= 0) this._lose();
   }
@@ -523,8 +572,11 @@ export class GameSimulation {
     if (this.phase !== 'playing' || this.sector >= 5) return;
     const config = SECTORS[this.sectorIndex];
     const remainingNeeded = Math.max(0, config.target - this.sectorSealed);
-    const minimumLive = Math.min(4 + Math.floor(this.sector / 2), remainingNeeded + 1);
-    if (this.enemies.length < minimumLive && remainingNeeded > 0 && this.rng.next() < 0.025) this._spawnEnemy(/** @type {EnemyType} */ (this.rng.pick(config.enemyMix)));
+    const minimumLive = Math.min(3 + Math.floor(this.sector / 2), remainingNeeded + 1);
+    const respawnChance = 0.012 + this.sector * 0.0035;
+    if (this.enemies.length < minimumLive && remainingNeeded > 0 && this.rng.next() < respawnChance) {
+      this._spawnEnemy(/** @type {EnemyType} */ (this.rng.pick(config.enemyMix)));
+    }
   }
 
   /** @param {number} dtMs */
@@ -543,15 +595,16 @@ export class GameSimulation {
   _win() {
     this.phase = 'victory';
     this._breakWeave('victory');
-    const timeBonus = Math.max(0, 12000 - Math.floor(this.runTimeMs / 1000) * 35);
-    this.score += timeBonus;
+    const timeBonus = Math.max(0, 12500 - Math.floor(this.runTimeMs / 1000) * 32);
+    const chainBonus = this.bestCombo * 180;
+    this.score += timeBonus + chainBonus;
     this.result = this._buildResult(true);
-    this._emit('victory', { result: this.result, timeBonus });
+    this._emit('victory', { result: this.result, timeBonus, chainBonus });
   }
 
   /** @param {boolean} victory */
   _buildResult(victory) {
-    const grade = !victory ? 'D' : this.score >= 15000 ? 'S' : this.score >= 10500 ? 'A' : this.score >= 7000 ? 'B' : 'C';
+    const grade = !victory ? 'D' : this.score >= 18500 ? 'S' : this.score >= 13000 ? 'A' : this.score >= 9000 ? 'B' : 'C';
     return { victory, score: this.score, timeMs: this.runTimeMs, sealed: this.totalSealed, bestCombo: this.bestCombo, grade };
   }
 
@@ -559,6 +612,10 @@ export class GameSimulation {
   _emit(type, payload) { this.events.push({ type, ...payload }); }
 
   drainEvents() { const events = this.events; this.events = []; return events; }
+
+  get chainProgress() {
+    return this.combo > 1 ? clamp(this.chainTimerMs / CHAIN_WINDOW_MS, 0, 1) : 0;
+  }
 
   get objectiveText() {
     if (this.sector < 5) return `SEAL ${Math.min(this.sectorSealed, SECTORS[this.sectorIndex].target)} / ${SECTORS[this.sectorIndex].target}`;
@@ -571,7 +628,7 @@ export class GameSimulation {
     if (this.sector !== 1 || this.tutorialMs <= 0) return '';
     if (this.tutorialStage === 0) return 'MOVE — WASD / ARROWS OR LEFT TOUCH STICK';
     if (this.tutorialStage === 1) return 'KEEP WEAVING — CURVE BACK THROUGH YOUR START NODE TO CLOSE THE LOOP';
-    return 'GOOD — SEAL FOUR ANOMALIES TO OPEN THE NEXT SECTOR';
+    return 'GOOD — CHAIN FAST SEALS FOR SCORE, ENERGY, AND FASTER BURST RECHARGE';
   }
 
   debugForceLoop() {
@@ -601,13 +658,15 @@ export class GameSimulation {
     for (const lock of this.boss.locks) lock.active = false;
     this.boss.hp = 0;
     this.totalSealed = 31;
-    this.score = Math.max(this.score, 12340);
-    this.bestCombo = 7;
+    this.score = Math.max(this.score, 14500);
+    this.bestCombo = Math.max(this.bestCombo, 8);
     this._win();
   }
 
   debugFailure() {
     if (this.phase === 'title') this.startRun();
+    this.sectorGraceMs = 0;
+    this.player.invulnerableMs = 0;
     this.player.shield = 0;
     this._lose();
   }
