@@ -130,6 +130,12 @@ export class AudioDirector {
     } else if (type === 'enemySealed') {
       this._tone(610, now, .08, .06, 'square', bus);
       this._noise(now, .05, .035, bus, 2100);
+    } else if (type === 'multiSeal') {
+      [540, 720, 960].forEach((f, i) => this._tone(f, now + i * .035, .14 + i * .02, .055, i === 2 ? 'sine' : 'triangle', bus));
+      this._noise(now, .07, .028, bus, 2500);
+    } else if (type === 'chainBreak') {
+      this._tone(240, now, .09, .035, 'square', bus);
+      this._tone(170, now + .045, .13, .028, 'triangle', bus);
     } else if (type === 'dash') {
       this._noise(now, .12, .08, bus, 1000);
       this._tone(145, now, .14, .06, 'sawtooth', bus);

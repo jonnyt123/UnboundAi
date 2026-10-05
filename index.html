@@ -9,9 +9,10 @@
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <div id="app" data-phase="title">
+  <div id="app" data-phase="title" data-sector="1">
     <canvas id="game" aria-label="THREAD NULL game arena"></canvas>
     <div class="screen-shader" aria-hidden="true"></div>
+    <div class="frame-chrome" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
 
     <section id="compatibilityPanel" class="compatibility-panel" role="alert" hidden>
       <div class="compatibility-card">
@@ -25,22 +26,23 @@
       <div class="hud-cluster hud-left">
         <div class="eyebrow">SECTOR <span id="sectorValue">01</span></div>
         <div id="objectiveValue" class="objective">SEAL 0 / 4</div>
+        <div class="hud-meta"><span id="runTimeValue">00:00</span><span id="threatValue">STABLE</span></div>
       </div>
       <div class="hud-cluster hud-center" aria-label="Player status">
+        <div class="meter-caption"><span>SHIELD</span><span>THREAD</span></div>
         <div class="shield-row" id="shieldPips" aria-label="Shield integrity"></div>
-        <div class="energy-shell" aria-label="Thread charge">
-          <div id="energyBar" class="energy-bar"></div>
-        </div>
-        <div class="dash-shell" aria-label="Burst cooldown">
-          <div id="dashBar" class="dash-bar"></div>
-        </div>
+        <div class="energy-shell" aria-label="Thread charge"><div id="energyBar" class="energy-bar"></div></div>
+        <div id="dashShell" class="dash-shell" aria-label="Burst cooldown"><div id="dashBar" class="dash-bar"></div></div>
       </div>
       <div class="hud-cluster hud-right">
-        <div id="comboValue" class="combo">×1</div>
+        <div id="comboValue" class="combo">CHAIN ×1</div>
         <div id="scoreValue" class="score">000000</div>
+        <div id="chainMeter" class="chain-meter" aria-label="Chain window"><div id="chainBar" class="chain-bar"></div></div>
       </div>
       <button id="pauseButton" class="icon-button pause-button" type="button" aria-label="Pause game">Ⅱ</button>
     </header>
+
+    <div id="combatCallout" class="combat-callout" aria-live="polite"></div>
 
     <div id="sectorBanner" class="sector-banner" aria-live="assertive" hidden>
       <span class="sector-kicker">BREACH STABILIZED</span>
@@ -49,6 +51,7 @@
     </div>
 
     <main id="titleScreen" class="menu-screen title-screen">
+      <div class="title-telemetry" aria-hidden="true"><span>NODE 00</span><span>CONTAINMENT / ACTIVE</span><span>LOCAL SIGNAL</span></div>
       <div class="brand-lockup">
         <div class="brand-sigil" aria-hidden="true"><span></span><span></span><span></span></div>
         <p class="brand-overline">BLACKSITE RECOVERY PROTOCOL</p>
@@ -70,12 +73,12 @@
       <div class="modal-card how-card">
         <button class="modal-close" data-close-panel type="button" aria-label="Close how to play">×</button>
         <p class="panel-kicker">FIELD MANUAL 01</p>
-        <h2 id="howTitle">WEAVE. CLOSE. SEAL.</h2>
+        <h2 id="howTitle">WEAVE. CLOSE. CHAIN.</h2>
         <div class="instruction-grid">
-          <article><span class="instruction-glyph">01</span><h3>Move</h3><p>WASD / arrows or the left touch stick. Stay inside the lattice.</p></article>
-          <article><span class="instruction-glyph">02</span><h3>Weave</h3><p>Hold Space or WEAVE while moving. Your thread burns charge.</p></article>
-          <article><span class="instruction-glyph">03</span><h3>Close</h3><p>Curve back through your thread's start node. Anything hostile inside the loop is sealed.</p></article>
-          <article><span class="instruction-glyph">04</span><h3>Burst</h3><p>Shift or BURST grants a short invulnerable dash. Use it to cross pressure safely.</p></article>
+          <article><span class="instruction-glyph">01</span><h3>Move</h3><p>WASD / arrows or the left touch stick. Keep moving and shape your route before pressure converges.</p></article>
+          <article><span class="instruction-glyph">02</span><h3>Weave</h3><p>Hold Space or WEAVE while moving. Thread charge drains while the line is active and refills when released.</p></article>
+          <article><span class="instruction-glyph">03</span><h3>Close</h3><p>Curve back through your start node. Hostiles inside the closed loop are sealed at once.</p></article>
+          <article><span class="instruction-glyph">04</span><h3>Chain</h3><p>Seal again before the chain bar empties. Multi-seals score more, restore energy, and recharge BURST faster.</p></article>
         </div>
         <div class="tip-strip"><strong>Final protocol:</strong> disable all three boss locks with loops, then cage the exposed core three times.</div>
         <button class="primary-button compact" data-close-panel type="button"><span>UNDERSTOOD</span></button>
@@ -121,7 +124,7 @@
           <div><span>SCORE</span><strong id="resultScore">000000</strong></div>
           <div><span>TIME</span><strong id="resultTime">00:00</strong></div>
           <div><span>SEALED</span><strong id="resultSealed">0</strong></div>
-          <div><span>BEST COMBO</span><strong id="resultCombo">×1</strong></div>
+          <div><span>BEST CHAIN</span><strong id="resultCombo">×1</strong></div>
         </div>
         <div class="result-actions">
           <button id="retryButton" class="primary-button compact" type="button"><span>RUN AGAIN</span></button>

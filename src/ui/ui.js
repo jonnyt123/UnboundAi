@@ -17,6 +17,8 @@ export class GameUI {
     this.rotateHint = must('#rotateHint');
     this.tutorialPrompt = must('#tutorialPrompt');
     this.sectorBanner = must('#sectorBanner');
+    this.combatCallout = must('#combatCallout');
+    this.calloutTimer = 0;
     this.progress = loadProgress();
     this.settings = loadSettings();
     this.lastPhase = 'title';
@@ -118,9 +120,38 @@ export class GameUI {
     document.documentElement.style.setProperty('--ui-scale', String(this.settings.uiScale));
   }
 
+  /** @param {Array<any>} events */
+  handleEvents(events) {
+    for (const event of events) {
+      if (event.type === 'multiSeal') {
+        this._showCallout(`${event.count}× MULTI-SEAL  +${event.bonus}`, 'cyan');
+      } else if (event.type === 'lockBreak') {
+        this._showCallout('CORE LOCK BROKEN', 'amber');
+      } else if (event.type === 'bossHit') {
+        this._showCallout(`CORE BREACH  ${3 - event.hp}/3`, 'magenta');
+      } else if (event.type === 'playerHit') {
+        this._showCallout('SIGNAL DAMAGE', 'danger');
+      } else if (event.type === 'chainBreak') {
+        this._showCallout(`CHAIN LOST  ×${event.combo}`, 'muted');
+      }
+    }
+  }
+
+  /** @param {string} message @param {string} tone */
+  _showCallout(message, tone) {
+    if (this.calloutTimer) window.clearTimeout(this.calloutTimer);
+    this.combatCallout.textContent = message;
+    this.combatCallout.dataset.tone = tone;
+    this.combatCallout.classList.remove('show');
+    void this.combatCallout.offsetWidth;
+    this.combatCallout.classList.add('show');
+    this.calloutTimer = window.setTimeout(() => this.combatCallout.classList.remove('show'), 1050);
+  }
+
   /** @param {any} sim */
   update(sim) {
     this.app.dataset.phase = sim.phase;
+    this.app.dataset.sector = String(sim.sector);
     if (sim.phase !== this.lastPhase) this._onPhaseChange(sim);
     this.lastPhase = sim.phase;
     const gameplayVisible = ['playing','intermission','paused'].includes(sim.phase);
@@ -131,17 +162,36 @@ export class GameUI {
     if (gameplayVisible) {
       text('#sectorValue', String(sim.sector).padStart(2, '0'));
       text('#objectiveValue', sim.objectiveText);
+      text('#runTimeValue', formatTime(sim.runTimeMs));
+      text('#threatValue', this._pressureText(sim));
       text('#scoreValue', String(Math.max(0, Math.floor(sim.score))).padStart(6, '0'));
-      text('#comboValue', sim.combo > 1 ? `×${sim.combo}` : '');
+      text('#comboValue', `CHAIN ×${sim.combo}`);
       const energy = must('#energyBar');
       const dash = must('#dashBar');
-      if (energy instanceof HTMLElement) energy.style.transform = `scaleX(${Math.max(0, sim.player.energy / 100)})`;
-      if (dash instanceof HTMLElement) dash.style.transform = `scaleX(${Math.max(0, 1 - sim.player.dashCooldownMs / 1850)})`;
+      const dashShell = must('#dashShell');
+      const chain = must('#chainBar');
+      const chainMeter = must('#chainMeter');
+      energy.style.transform = `scaleX(${Math.max(0, sim.player.energy / 100)})`;
+      dash.style.transform = `scaleX(${Math.max(0, 1 - sim.player.dashCooldownMs / 1500)})`;
+      chain.style.transform = `scaleX(${Math.max(0, sim.chainProgress)})`;
+      dashShell.classList.toggle('ready', sim.player.dashCooldownMs <= 0);
+      chainMeter.classList.toggle('active', sim.combo > 1);
+      chainMeter.classList.toggle('hot', sim.combo >= 6);
       this._renderShield(sim.player.shield, sim.player.maxShield);
       this.tutorialPrompt.hidden = !sim.tutorialText;
       if (sim.tutorialText) this.tutorialPrompt.textContent = sim.tutorialText;
     } else this.tutorialPrompt.hidden = true;
     this._updateTouchVisibility();
+  }
+
+  /** @param {any} sim */
+  _pressureText(sim) {
+    if (sim.sector === 5) return sim.boss?.locks?.some((/** @type {any} */ lock) => lock.active) ? 'CORE LOCKED' : 'CORE EXPOSED';
+    const pressure = sim.enemies.length + sim.bullets.length * .34 + sim.sector;
+    if (pressure >= 15) return 'CRITICAL';
+    if (pressure >= 10) return 'HIGH';
+    if (pressure >= 7) return 'ELEVATED';
+    return 'STABLE';
   }
 
   /** @param {any} sim */
@@ -151,6 +201,7 @@ export class GameUI {
       this.pausePanel.hidden = true;
       this.settingsPanel.hidden = true;
       this.howPanel.hidden = true;
+      this.combatCallout.classList.remove('show');
       this._updateBest();
     }
     if (sim.phase === 'gameover' || sim.phase === 'victory') this._showResult(sim.result);
@@ -200,11 +251,10 @@ export class GameUI {
     if (kicker) kicker.textContent = config.label;
     this.sectorBanner.hidden = false;
     this.sectorBanner.getAnimations().forEach((anim) => anim.cancel());
-    // Force a new CSS animation instance without layout-sensitive timing logic.
     this.sectorBanner.style.animation = 'none';
     void this.sectorBanner.offsetWidth;
     this.sectorBanner.style.animation = '';
-    window.setTimeout(() => { this.sectorBanner.hidden = true; }, 1550);
+    window.setTimeout(() => { this.sectorBanner.hidden = true; }, 1500);
   }
 
   _updateBest() { text('#bestScoreLabel', `BEST SIGNAL: ${String(this.progress.bestScore).padStart(6, '0')}`); }

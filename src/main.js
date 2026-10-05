@@ -71,6 +71,7 @@ function startGame(renderer) {
     const events = simulation.drainEvents();
     if (events.length) {
       renderer.handleEvents(events);
+      ui.handleEvents(events);
       for (const event of events) {
         audio.play(event.type);
         if (event.type === 'sectorStart') {
@@ -110,7 +111,7 @@ function startGame(renderer) {
         failure: () => simulation.debugFailure(),
         pause: () => simulation.pause(),
         resume: () => simulation.resume(),
-        state: () => ({ phase: simulation.phase, score: simulation.score, sector: simulation.sector, enemies: simulation.enemies.length, bullets: simulation.bullets.length }),
+        state: () => ({ phase: simulation.phase, score: simulation.score, sector: simulation.sector, enemies: simulation.enemies.length, bullets: simulation.bullets.length, combo: simulation.combo }),
       };
     }
   }
